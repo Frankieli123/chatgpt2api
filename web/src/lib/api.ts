@@ -585,6 +585,20 @@ export async function downloadImages(paths: string[]) {
   URL.revokeObjectURL(url);
 }
 
+export async function downloadCompressedImages(paths: string[], quality: number, filename = "images") {
+  const response = await request.post("/api/images/download", { paths, quality }, { responseType: "blob" });
+  const blob = response.data as Blob;
+  const url = URL.createObjectURL(blob);
+  const name = (filename.trim() || "images").replace(/\.zip$/i, "");
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${name}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 export async function downloadSingleImage(path: string) {
   const response = await request.get(`/api/images/download/${path}`, { responseType: "blob" });
   const blob = response.data as Blob;

@@ -349,6 +349,51 @@ def download_images_zip(paths: list[str]) -> io.BytesIO:
     return buf
 
 
+def download_images_zip_compressed(paths: list[str], quality: int = 80) -> io.BytesIO:
+    quality = max(1, min(100, int(quality)))
+    root = config.images_dir.resolve()
+    buf = io.BytesIO()
+    added = 0
+    used_names: set[str] = set()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for item in paths:
+            rel = _safe_relative_path(item)
+            path = (root / rel).resolve()
+            try:
+                path.relative_to(root)
+            except ValueError:
+                continue
+            if not path.is_file():
+                continue
+            try:
+                with Image.open(path) as img:
+                    img = ImageOps.exif_transpose(img)
+                    if img.mode in ("RGBA", "LA", "P"):
+                        background = Image.new("RGB", img.size, (255, 255, 255))
+                        rgba = img.convert("RGBA")
+                        background.paste(rgba, mask=rgba.split()[-1])
+                        img = background
+                    else:
+                        img = img.convert("RGB")
+                    out = io.BytesIO()
+                    img.save(out, format="JPEG", quality=quality, optimize=True)
+            except Exception:
+                continue
+            name = f"{path.stem}.jpg"
+            if name in used_names:
+                counter = 2
+                while f"{path.stem}_{counter}.jpg" in used_names:
+                    counter += 1
+                name = f"{path.stem}_{counter}.jpg"
+            used_names.add(name)
+            zf.writestr(name, out.getvalue())
+            added += 1
+    if added == 0:
+        raise HTTPException(status_code=404, detail="no images found")
+    buf.seek(0)
+    return buf
+
+
 def _auto_cleanup_worker(stop_event: threading.Event) -> None:
     """后台线程：每30分钟检查存储，空间低于阈值自动清理最旧图片"""
     import shutil

@@ -15,6 +15,7 @@ from services.image_service import (
     delete_images,
     delete_to_target,
     download_images_zip,
+    download_images_zip_compressed,
     get_image_download_response,
     get_image_response,
     get_thumbnail_response,
@@ -43,6 +44,7 @@ class ImageDeleteRequest(BaseModel):
 
 class ImageDownloadRequest(BaseModel):
     paths: list[str]
+    quality: int | None = None
 
 class ImageTagsRequest(BaseModel):
     path: str
@@ -106,7 +108,7 @@ def create_router(app_version: str) -> APIRouter:
     @router.post("/api/images/download")
     async def download_images_endpoint(body: ImageDownloadRequest, authorization: str | None = Header(default=None)):
         require_admin(authorization)
-        buf = download_images_zip(body.paths)
+        buf = download_images_zip_compressed(body.paths, body.quality) if body.quality is not None else download_images_zip(body.paths)
         return StreamingResponse(
             buf,
             media_type="application/zip",
