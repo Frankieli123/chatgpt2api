@@ -317,38 +317,6 @@ def delete_to_target(target_free_mb: int, dry_run: bool = False) -> dict:
     }
 
 
-def download_images_zip(paths: list[str]) -> io.BytesIO:
-    root = config.images_dir.resolve()
-    buf = io.BytesIO()
-    added = 0
-    used_names: set[str] = set()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for item in paths:
-            rel = _safe_relative_path(item)
-            path = (root / rel).resolve()
-            try:
-                path.relative_to(root)
-            except ValueError:
-                continue
-            if not path.is_file():
-                continue
-            name = path.name
-            if name in used_names:
-                stem = path.stem
-                suffix = path.suffix
-                counter = 2
-                while f"{stem}_{counter}{suffix}" in used_names:
-                    counter += 1
-                name = f"{stem}_{counter}{suffix}"
-            used_names.add(name)
-            zf.write(path, name)
-            added += 1
-    if added == 0:
-        raise HTTPException(status_code=404, detail="no images found")
-    buf.seek(0)
-    return buf
-
-
 def download_images_zip_compressed(paths: list[str], quality: int = 80) -> io.BytesIO:
     quality = max(1, min(100, int(quality)))
     root = config.images_dir.resolve()
@@ -359,14 +327,20 @@ def download_images_zip_compressed(paths: list[str], quality: int = 80) -> io.By
         for item in paths:
             rel = _safe_relative_path(item)
             path = (root / rel).resolve()
+            payload: bytes | None = None
             try:
                 path.relative_to(root)
             except ValueError:
                 continue
-            if not path.is_file():
-                continue
+            if path.is_file():
+                payload = path.read_bytes()
+            else:
+                try:
+                    payload = image_storage_service.get_bytes(rel)
+                except Exception:
+                    continue
             try:
-                with Image.open(path) as img:
+                with Image.open(io.BytesIO(payload)) as img:
                     img = ImageOps.exif_transpose(img)
                     if img.mode in ("RGBA", "LA", "P"):
                         background = Image.new("RGB", img.size, (255, 255, 255))
@@ -379,12 +353,13 @@ def download_images_zip_compressed(paths: list[str], quality: int = 80) -> io.By
                     img.save(out, format="JPEG", quality=quality, optimize=True)
             except Exception:
                 continue
-            name = f"{path.stem}.jpg"
+            stem = Path(rel).stem
+            name = f"{stem}.jpg"
             if name in used_names:
                 counter = 2
-                while f"{path.stem}_{counter}.jpg" in used_names:
+                while f"{stem}_{counter}.jpg" in used_names:
                     counter += 1
-                name = f"{path.stem}_{counter}.jpg"
+                name = f"{stem}_{counter}.jpg"
             used_names.add(name)
             zf.writestr(name, out.getvalue())
             added += 1
