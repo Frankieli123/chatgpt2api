@@ -553,7 +553,7 @@ class OpenAIBackendAPI:
         if not base_model:
             return "auto"
         if base_model == "gpt-image-2":
-            return "gpt-5-3"
+            return str(getattr(self, "image_backend_model_override", "") or config.image_backend_model)
         if base_model == CODEX_IMAGE_MODEL:
             return base_model
         return "auto"

@@ -72,6 +72,7 @@ const DEFAULT_THIRD_PARTY_APPS: ThirdPartyAppsSettings = {
     url: "https://canvas.best",
   },
 };
+const DEFAULT_IMAGE_BACKEND_MODEL = "gpt-5-5-thinking";
 
 function normalizeProxyRuntime(value: unknown): ProxyRuntimeSettings {
   const source = typeof value === "object" && value !== null ? value as Partial<ProxyRuntimeSettings> : {};
@@ -117,9 +118,8 @@ function normalizeProxyRuntime(value: unknown): ProxyRuntimeSettings {
 
 function normalizeThirdPartyApps(value: unknown): ThirdPartyAppsSettings {
   const source = typeof value === "object" && value !== null ? value as Partial<ThirdPartyAppsSettings> : {};
-  const canvas = typeof source.infinite_canvas === "object" && source.infinite_canvas
-    ? source.infinite_canvas
-    : {};
+  const canvas: Partial<ThirdPartyAppsSettings["infinite_canvas"]> =
+    typeof source.infinite_canvas === "object" && source.infinite_canvas ? source.infinite_canvas : {};
   return {
     infinite_canvas: {
       enabled: Boolean(canvas.enabled),
@@ -175,6 +175,8 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
     ...config,
     refresh_account_interval_minute: Number(config.refresh_account_interval_minute || 5),
     image_retention_days: Number(config.image_retention_days || 30),
+    image_backend_model: String(config.image_backend_model || DEFAULT_IMAGE_BACKEND_MODEL).trim() || DEFAULT_IMAGE_BACKEND_MODEL,
+    image_backend_model_fallback_enabled: Boolean(config.image_backend_model_fallback_enabled !== false),
     image_poll_timeout_secs: Number(config.image_poll_timeout_secs || 120),
     image_account_concurrency: Number(config.image_account_concurrency || 3),
     image_settle_enabled: Boolean(config.image_settle_enabled !== false),
@@ -300,6 +302,8 @@ type SettingsStore = {
   testBackup: () => Promise<void>;
   setRefreshAccountIntervalMinute: (value: string) => void;
   setImageRetentionDays: (value: string) => void;
+  setImageBackendModel: (value: string) => void;
+  setImageBackendModelFallbackEnabled: (value: boolean) => void;
   setImagePollTimeoutSecs: (value: string) => void;
   setImageAccountConcurrency: (value: string) => void;
   setImageSettleEnabled: (value: boolean) => void;
@@ -447,6 +451,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         ...config,
         refresh_account_interval_minute: Math.max(1, Number(config.refresh_account_interval_minute) || 1),
         image_retention_days: Math.max(1, Number(config.image_retention_days) || 30),
+        image_backend_model: String(config.image_backend_model || DEFAULT_IMAGE_BACKEND_MODEL).trim() || DEFAULT_IMAGE_BACKEND_MODEL,
+        image_backend_model_fallback_enabled: Boolean(config.image_backend_model_fallback_enabled !== false),
         image_poll_timeout_secs: Math.max(1, Number(config.image_poll_timeout_secs) || 120),
         image_account_concurrency: Math.max(1, Number(config.image_account_concurrency) || 3),
         image_settle_enabled: Boolean(config.image_settle_enabled !== false),
@@ -545,6 +551,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   setImageRetentionDays: (value) => {
     set((state) => state.config ? { config: { ...state.config, image_retention_days: value } } : {});
+  },
+
+  setImageBackendModel: (value) => {
+    set((state) => state.config ? { config: { ...state.config, image_backend_model: value } } : {});
+  },
+
+  setImageBackendModelFallbackEnabled: (value) => {
+    set((state) => state.config ? { config: { ...state.config, image_backend_model_fallback_enabled: value } } : {});
   },
 
   setImagePollTimeoutSecs: (value) => {

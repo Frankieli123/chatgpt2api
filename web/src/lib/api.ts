@@ -166,6 +166,8 @@ export type SettingsConfig = {
   };
   refresh_account_interval_minute?: number | string;
   image_retention_days?: number | string;
+  image_backend_model?: string;
+  image_backend_model_fallback_enabled?: boolean;
   image_poll_timeout_secs?: number | string;
   image_account_concurrency?: number | string;
   image_parallel_generation?: boolean;

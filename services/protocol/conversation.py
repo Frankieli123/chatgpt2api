@@ -115,6 +115,58 @@ def image_stream_error_message(message: str) -> str:
     return text or "image generation failed"
 
 
+def is_no_image_generation_message(message: str) -> bool:
+    text = str(message or "").lower()
+    if any(item in text for item in ("policy", "moderation", "safety", "blocked", "rejected")):
+        return False
+    return any(
+        item in text
+        for item in (
+            "no image result",
+            "without generating images",
+            "could not be retrieved",
+            "response was incomplete",
+            "image generation started upstream",
+            "upstream completed",
+        )
+    )
+
+
+def is_fallbackable_image_backend_error(error: object) -> bool:
+    code = str(getattr(error, "code", "") or "").strip()
+    if code == "content_policy_violation":
+        return False
+    if code in {"no_image_generated", "upstream_text_reply", "upstream_error"}:
+        return True
+    text = str(error or "").lower()
+    if any(item in text for item in ("content_policy", "content policy", "policy_violation", "moderation")):
+        return False
+    return any(
+        item in text
+        for item in (
+            "no image result",
+            "without generating images",
+            "could not be retrieved",
+            "response was incomplete",
+            "returned a text description",
+            "model_not_found",
+            "model_not_available",
+            "unsupported model",
+            "model unavailable",
+            "temporarily unavailable",
+            "upstream image connection failed",
+            "upstream connection timed out",
+        )
+    )
+
+
+def image_backend_model_attempts(model: str) -> list[str]:
+    _, base_model = split_image_model(model)
+    if base_model != "gpt-image-2":
+        return [""]
+    return config.image_backend_model_attempts
+
+
 REFERENCED_IMAGE_IDS_RE = re.compile(r'"referenced_image_ids"\s*:\s*\[([^\]]+)\]')
 # 检测模型返回的部分工具调用 JSON（如 {"size":"1920x1088","n":1}）
 # 这些 JSON 包含图片生成工具的参数，但没有实际生成图片
@@ -1271,6 +1323,25 @@ def _generate_single_image(
     conn_timeout_retry_count = 0
     poll_timeout_retry_count = 0
     account_email = ""
+    backend_model_candidates = image_backend_model_attempts(request.model)
+    backend_model_attempt_index = 0
+
+    def try_next_backend_model(reason: str, error: object) -> bool:
+        nonlocal backend_model_attempt_index
+        if backend_model_attempt_index + 1 >= len(backend_model_candidates):
+            return False
+        previous_model = backend_model_candidates[backend_model_attempt_index]
+        backend_model_attempt_index += 1
+        next_model = backend_model_candidates[backend_model_attempt_index]
+        logger.warning({
+            "event": "image_backend_model_fallback",
+            "index": index,
+            "reason": reason,
+            "previous_model": previous_model,
+            "next_model": next_model,
+            "error": str(error)[:300],
+        })
+        return True
 
     while True:
         try:
@@ -1301,6 +1372,16 @@ def _generate_single_image(
         backend = None
         try:
             backend = OpenAIBackendAPI(access_token=token)
+            backend_model = backend_model_candidates[backend_model_attempt_index] if backend_model_candidates else ""
+            if backend_model:
+                setattr(backend, "image_backend_model_override", backend_model)
+                logger.info({
+                    "event": "image_backend_model_attempt",
+                    "index": index,
+                    "backend_model": backend_model,
+                    "attempt": backend_model_attempt_index + 1,
+                    "total_attempts": len(backend_model_candidates),
+                })
             if request.progress_callback:
                 backend.progress_callback = request.progress_callback
             stream_fn = stream_codex_image_outputs if is_codex_image_model(request.model) else stream_image_outputs
@@ -1309,11 +1390,12 @@ def _generate_single_image(
                 if account_email and not output.account_email:
                     output.account_email = account_email
                 if output.kind == "message" and request.message_as_error:
+                    no_image_generated = is_no_image_generation_message(output.text)
                     raise ImageGenerationError(
                         output.text or "Image generation was rejected by upstream policy.",
-                        status_code=400,
-                        error_type="invalid_request_error",
-                        code="content_policy_violation",
+                        status_code=502 if no_image_generated else 400,
+                        error_type="server_error" if no_image_generated else "invalid_request_error",
+                        code="no_image_generated" if no_image_generated else "content_policy_violation",
                         account_email=account_email,
                         conversation_id=output.conversation_id,
                     )
@@ -1330,8 +1412,8 @@ def _generate_single_image(
                     conv_id = outputs[-1].conversation_id if outputs else ""
                     raise ImageGenerationError(
                         "upstream completed without generating images",
-                        status_code=400,
-                        error_type="invalid_request_error",
+                        status_code=502,
+                        error_type="server_error",
                         code="no_image_generated",
                         account_email=account_email,
                         conversation_id=conv_id,
@@ -1343,6 +1425,8 @@ def _generate_single_image(
             account_service.mark_image_result(token, False)
             if account_email:
                 setattr(exc, "account_email", account_email)
+            if try_next_backend_model("poll_timeout", exc):
+                continue
             # 轮询超时：换账号重试
             if not emitted_for_token:
                 poll_timeout_retry_count += 1
@@ -1387,6 +1471,11 @@ def _generate_single_image(
             if account_email and not getattr(exc, "account_email", ""):
                 exc.account_email = account_email
             error_text = str(exc)
+            if is_fallbackable_image_backend_error(exc) and try_next_backend_model(
+                    str(getattr(exc, "code", "") or "generation_error"),
+                    exc,
+            ):
+                continue
             # 如果是模型返回文本而非图片，尝试换账号重试
             if is_model_text_reply_instead_of_image(error_text) and not emitted_for_token:
                 text_reply_retry_count += 1
@@ -1440,6 +1529,8 @@ def _generate_single_image(
                     token = refreshed_token
                     continue
                 account_service.remove_invalid_token(token, "image_stream")
+                continue
+            if is_fallbackable_image_backend_error(exc) and try_next_backend_model("upstream_error", exc):
                 continue
             # TLS/SSL 连接错误：自动重试
             if not emitted_for_token and is_tls_connection_error(last_error):

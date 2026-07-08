@@ -15,6 +15,13 @@ import { testProxy, type ProxyTestResult } from "@/lib/api";
 
 import { useSettingsStore } from "../store";
 
+const imageBackendModelOptions = [
+  { value: "gpt-5-5-thinking", label: "推荐：gpt-5-5-thinking" },
+  { value: "gpt-5-5", label: "新版：gpt-5-5" },
+  { value: "gpt-5-3", label: "旧版：gpt-5-3" },
+  { value: "auto", label: "自动：auto" },
+];
+
 export function ConfigCard() {
   const [isTestingProxy, setIsTestingProxy] = useState(false);
   const [proxyTestResult, setProxyTestResult] = useState<ProxyTestResult | null>(null);
@@ -24,6 +31,8 @@ export function ConfigCard() {
   const isSavingConfig = useSettingsStore((state) => state.isSavingConfig);
   const setRefreshAccountIntervalMinute = useSettingsStore((state) => state.setRefreshAccountIntervalMinute);
   const setImageRetentionDays = useSettingsStore((state) => state.setImageRetentionDays);
+  const setImageBackendModel = useSettingsStore((state) => state.setImageBackendModel);
+  const setImageBackendModelFallbackEnabled = useSettingsStore((state) => state.setImageBackendModelFallbackEnabled);
   const setImagePollTimeoutSecs = useSettingsStore((state) => state.setImagePollTimeoutSecs);
   const setImageAccountConcurrency = useSettingsStore((state) => state.setImageAccountConcurrency);
   const setImageSettleEnabled = useSettingsStore((state) => state.setImageSettleEnabled);
@@ -45,6 +54,7 @@ export function ConfigCard() {
   const isTestingImageStorage = useSettingsStore((state) => state.isTestingImageStorage);
   const isSyncingImageStorage = useSettingsStore((state) => state.isSyncingImageStorage);
   const saveConfig = useSettingsStore((state) => state.saveConfig);
+  const selectedImageBackendModel = String(config?.image_backend_model || "gpt-5-5-thinking").trim() || "gpt-5-5-thinking";
 
   const handleTestProxy = async () => {
     const candidate = String(config?.proxy || "").trim();
@@ -155,6 +165,30 @@ export function ConfigCard() {
               className="h-10 rounded-xl border-stone-200 bg-white"
             />
             <p className="text-xs text-stone-500">自动删除多少天前的本地图片。</p>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-stone-700">生图底层模型</label>
+            <Select value={selectedImageBackendModel} onValueChange={setImageBackendModel}>
+              <SelectTrigger className="h-10 rounded-xl border-stone-200 bg-white shadow-none">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {imageBackendModelOptions.map((model) => (
+                  <SelectItem key={model.value} value={model.value}>{model.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-stone-500">页面/API 仍使用 gpt-image-2，这里只控制发给 ChatGPT Web 的内部 slug。</p>
+          </div>
+          <div className="space-y-2">
+            <label className="flex items-center gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-700">
+              <Checkbox
+                checked={Boolean(config?.image_backend_model_fallback_enabled !== false)}
+                onCheckedChange={(checked) => setImageBackendModelFallbackEnabled(Boolean(checked))}
+              />
+              生图失败后轮询备用模型
+            </label>
+            <p className="text-xs text-stone-500">先用上面的模型；遇到无图、超时或模型不可用时再尝试备用模型。</p>
           </div>
           <div className="space-y-2">
             <label className="text-sm text-stone-700">图片轮询超时</label>
